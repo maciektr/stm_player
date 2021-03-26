@@ -1,4 +1,7 @@
 
+.metadata
+build
+
 # Created by https://www.toptal.com/developers/gitignore/api/c,c++,jetbrains+all,vscode,assembler,cmake,linux,windows,osx
 # Edit at https://www.toptal.com/developers/gitignore?templates=c,c++,jetbrains+all,vscode,assembler,cmake,linux,windows,osx
 
