@@ -59,6 +59,7 @@
 #include "ansi.h"
 #include "term_io.h"
 #include "dbgu.h"
+#include "FLAC/stream_decoder.h"
 
 /* USER CODE END Includes */
 
@@ -623,6 +624,10 @@ void StartDefaultTask(void const * argument)
 	if(player_state)
 	{
 		uint32_t br;
+
+        FLAC__StreamDecoder* decoder = FLAC__stream_decoder_new();
+        if(decoder!=NULL)
+            FLAC__stream_decoder_delete(decoder);
 
 		if(buf_offs == BUFFER_OFFSET_HALF)
 		{
