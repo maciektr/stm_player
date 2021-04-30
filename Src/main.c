@@ -60,6 +60,7 @@
 #include "term_io.h"
 #include "dbgu.h"
 #include "FLAC/stream_decoder.h"
+#include "flac_decoder_handler.h"
 
 /* USER CODE END Includes */
 
@@ -528,6 +529,7 @@ static void f_disp_res(FRESULT r)
 void BSP_AUDIO_OUT_HalfTransfer_CallBack(void)
 {
   buf_offs = BUFFER_OFFSET_HALF;
+  // xprintf("half\n");
 }
 
 /**
@@ -539,6 +541,7 @@ void BSP_AUDIO_OUT_TransferComplete_CallBack(void)
 {
   buf_offs = BUFFER_OFFSET_FULL;
   BSP_AUDIO_OUT_ChangeBuffer((uint16_t*)&buff[0], AUDIO_BUFFER_SIZE / 2);
+  // xprintf("all\n");
 }
 
 
@@ -600,6 +603,8 @@ void StartDefaultTask(void const * argument)
 	  xprintf("audio init ERROR\n");
   }
 
+  start_flac_decoding("0:/a");
+
 
   /* Infinite loop */
   for(;;)
@@ -624,10 +629,6 @@ void StartDefaultTask(void const * argument)
 	if(player_state)
 	{
 		uint32_t br;
-
-        FLAC__StreamDecoder* decoder = FLAC__stream_decoder_new();
-        if(decoder!=NULL)
-            FLAC__stream_decoder_delete(decoder);
 
 		if(buf_offs == BUFFER_OFFSET_HALF)
 		{
