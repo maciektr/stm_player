@@ -476,7 +476,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 FIL file;
 
-const char* FNAME = "haltmich.wav";
+const char* FNAME = "0:/a";
 extern ApplicationTypeDef Appli_state;
 extern USBH_HandleTypeDef hUsbHostHS;
 enum
@@ -487,6 +487,7 @@ enum
 };
 #define AUDIO_BUFFER_SIZE             4096
 uint8_t buff[AUDIO_BUFFER_SIZE];
+uint8_t load_buff[AUDIO_BUFFER_SIZE];
 static uint8_t player_state = 0;
 static uint8_t buf_offs = BUFFER_OFFSET_NONE;
 static uint32_t fpos = 0;
@@ -581,15 +582,15 @@ void StartDefaultTask(void const * argument)
 
   FRESULT res;
 
-  res = f_open(&file,"0:/test_1k.wav",FA_READ);
+  res = f_open(&file,FNAME,FA_READ);
 
   if(res==FR_OK)
   {
-	  xprintf("wave file open OK\n");
+	  xprintf("flac file open OK\n");
   }
   else
   {
-	  xprintf("wave file open ERROR, res = %d\n",res);
+	  xprintf("flac file open ERROR, res = %d\n",res);
 	  f_disp_res(res);
 	  while(1);
   }
@@ -603,7 +604,8 @@ void StartDefaultTask(void const * argument)
 	  xprintf("audio init ERROR\n");
   }
 
-  start_flac_decoding("0:/a");
+
+  start_flac_decoding(FNAME, load_buff);
 
 
   /* Infinite loop */
