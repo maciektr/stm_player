@@ -28,6 +28,7 @@ typedef struct MyFileData{
     FIL file;
     char *path;
     uint8_t *buffer;
+    int *loaded_counter;
 } MyFileData;
 
 // TODO repeated from main
@@ -61,7 +62,7 @@ static void f_disp_res(FRESULT r)
 
 FLAC__StreamDecoder *decoder = 0;
 
-int start_flac_decoding(char *path, uint8_t *buffer)
+int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
 {
     FLAC__bool ok = true;
     FLAC__StreamDecoderInitStatus init_status;
@@ -74,6 +75,7 @@ int start_flac_decoding(char *path, uint8_t *buffer)
     MyFileData filedata;
     filedata.path = path;
     filedata.buffer = buffer;
+    filedata.loaded_counter = loaded_counter;
     FRESULT res = f_open(&filedata.file, path, FA_READ);
     f_disp_res(res);
 
@@ -98,10 +100,12 @@ int start_flac_decoding(char *path, uint8_t *buffer)
 }
 
 int load_flac_frame(){
+    xprintf("Run process single\n");
     FLAC__bool ok;
     ok = FLAC__stream_decoder_process_single(decoder);
     xprintf("decoding: %s\n", ok? "succeeded" : "FAILED");
     xprintf("   state: %s\n", FLAC__StreamDecoderStateString[FLAC__stream_decoder_get_state(decoder)]);
+    return 0;
 }
 
 FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data)
@@ -200,28 +204,34 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
     }
 
     MyFileData *myData = (MyFileData*)client_data;
+    myData->loaded_counter = 0;
 
 	/* write WAVE header before we write the first frame */
 	if(frame->header.number.sample_number == 0) {
         memcpy(myData->buffer, "RIFF", sizeof(char) * 4);
-        write_little_endian(myData->buffer, total_size + 36);
-        memcpy(myData->buffer, "WAVEfmt ", sizeof(char) * 8);
-        write_little_endian(myData->buffer, 16);
-        write_little_endian(myData->buffer, 1);
-        write_little_endian(myData->buffer, (FLAC__uint16)channels);
-        write_little_endian(myData->buffer, sample_rate);
-        write_little_endian(myData->buffer, sample_rate * channels * (bps/8));
-        write_little_endian(myData->buffer, (FLAC__uint16)(channels * (bps/8)));
-        write_little_endian(myData->buffer, (FLAC__uint16)bps);
-        memcpy(myData->buffer, "data", sizeof(char) * 4);
-        write_little_endian(myData->buffer, total_size);
+        write_little_endian(myData->buffer + 4, total_size + 36);
+        memcpy(myData->buffer + 8, "WAVEfmt ", sizeof(char) * 8);
+        write_little_endian(myData->buffer + 16, 16);
+        write_little_endian(myData->buffer + 20, 1);
+        write_little_endian(myData->buffer + 24, (FLAC__uint16)channels);
+        write_little_endian(myData->buffer + 28, sample_rate);
+        write_little_endian(myData->buffer + 32, sample_rate * channels * (bps/8));
+        write_little_endian(myData->buffer + 36, (FLAC__uint16)(channels * (bps/8)));
+        write_little_endian(myData->buffer + 40, (FLAC__uint16)bps);
+        memcpy(myData->buffer + 44, "data", sizeof(char) * 4);
+        write_little_endian(myData->buffer + 48, total_size);
+        myData->loaded_counter += 52;
 	}
 
 	/* write decoded PCM samples */
+    int buffer_offset = 0;
 	for(int i = 0; i < frame->header.blocksize; i++) {
-		write_little_endian(myData->buffer, (FLAC__int16)buffer[0][i]);  /* left channel */
-		write_little_endian(myData->buffer, (FLAC__int16)buffer[1][i]);  /* right channel */
+		write_little_endian(myData->buffer + buffer_offset, (FLAC__int16)buffer[0][i]);  /* left channel */
+        buffer_offset+=4;
+		write_little_endian(myData->buffer+buffer_offset, (FLAC__int16)buffer[1][i]);  /* right channel */
+        buffer_offset+=4;
 	}
+    myData->loaded_counter += buffer_offset;
 
    return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
 }

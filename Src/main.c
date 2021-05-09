@@ -605,7 +605,8 @@ void StartDefaultTask(void const * argument)
   }
 
 
-  start_flac_decoding(FNAME, load_buff);
+  int loaded_counter;
+  start_flac_decoding(FNAME, load_buff, &loaded_counter);
 
 
   /* Infinite loop */
@@ -634,40 +635,43 @@ void StartDefaultTask(void const * argument)
 
 		if(buf_offs == BUFFER_OFFSET_HALF)
 		{
-		  if(f_read(&file,
-					&buff[0],
-					AUDIO_BUFFER_SIZE/2,
-					(void *)&br) != FR_OK)
-		  {
-			BSP_AUDIO_OUT_Stop(CODEC_PDWN_SW);
-			xprintf("f_read error on half\n");
-		  }
-		  buf_offs = BUFFER_OFFSET_NONE;
+		  // if(f_read(&file,
+			// 		&buff[0],
+			// 		AUDIO_BUFFER_SIZE/2,
+			// 		(void *)&br) != FR_OK)
+		  // {
+			// BSP_AUDIO_OUT_Stop(CODEC_PDWN_SW);
+			// xprintf("f_read error on half\n");
+		  // }
+      load_flac_frame();
+      memcpy(buff, load_buff, loaded_counter);
+      buf_offs = BUFFER_OFFSET_NONE;
 		  fpos += br;
 
 		}
 
 		if(buf_offs == BUFFER_OFFSET_FULL)
 		{
-			if(f_read(&file,
-					&buff[AUDIO_BUFFER_SIZE /2],
-					AUDIO_BUFFER_SIZE/2,
-					(void *)&br) != FR_OK)
-			{
-				BSP_AUDIO_OUT_Stop(CODEC_PDWN_SW);
-				xprintf("f_read error on full\n");
-			}
-
+			// if(f_read(&file,
+			// 		&buff[AUDIO_BUFFER_SIZE /2],
+			// 		AUDIO_BUFFER_SIZE/2,
+			// 		(void *)&br) != FR_OK)
+			// {
+			// 	BSP_AUDIO_OUT_Stop(CODEC_PDWN_SW);
+			// 	xprintf("f_read error on full\n");
+			// }
+      load_flac_frame();
+      memcpy(buff, load_buff, loaded_counter);
 			buf_offs = BUFFER_OFFSET_NONE;
 			fpos += br;
 		}
 
-		if( br < AUDIO_BUFFER_SIZE/2 )
-		{
-			xprintf("stop at eof\n");
-			BSP_AUDIO_OUT_Stop(CODEC_PDWN_SW);
-			player_state = 0;
-		}
+		// if( br < AUDIO_BUFFER_SIZE/2 )
+		// {
+		// 	xprintf("stop at eof\n");
+		// 	BSP_AUDIO_OUT_Stop(CODEC_PDWN_SW);
+		// 	player_state = 0;
+		// }
 	}  //if(player_state)
 
 	vTaskDelay(2);
