@@ -95,8 +95,11 @@ int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
     }
 
     // end decoding
+    // f_close(path);
+}
+
+int close_decoder(){
     FLAC__stream_decoder_delete(decoder);
-    f_close(path);
 }
 
 int load_flac_frame(){

@@ -675,9 +675,9 @@ void StartDefaultTask(void const * argument)
 	}  //if(player_state)
 
 	vTaskDelay(2);
-
   }
   /* USER CODE END 5 */
+  close_decoder();
 }
 
 /**
