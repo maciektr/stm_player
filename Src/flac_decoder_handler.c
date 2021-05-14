@@ -1,7 +1,3 @@
-//
-// Created by Jan on 28.04.2021.
-//
-
 #include <stdio.h>
 #include <stdlib.h>
 #include "share/compat.h"
@@ -25,7 +21,7 @@ FLAC__bool eof_callback(const FLAC__StreamDecoder *decoder, void *client_data);
 
 
 typedef struct MyFileData{
-    FIL file;
+    FIL* file;
     char *path;
     uint8_t *buffer;
     int *loaded_counter;
@@ -61,6 +57,8 @@ static void f_disp_res(FRESULT r)
 }
 
 FLAC__StreamDecoder *decoder = 0;
+FIL file;
+MyFileData filedata;
 
 int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
 {
@@ -72,12 +70,13 @@ int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
         return 1;
     }
 
-    MyFileData filedata;
+    FRESULT res = f_open(&file, path, FA_READ);
+    f_disp_res(res);
     filedata.path = path;
     filedata.buffer = buffer;
     filedata.loaded_counter = loaded_counter;
-    FRESULT res = f_open(&filedata.file, path, FA_READ);
-    f_disp_res(res);
+    filedata.file = &file;
+
 
     init_status = FLAC__stream_decoder_init_stream(
             decoder, read_callback, seek_callback, tell_callback, length_callback, eof_callback,
@@ -93,9 +92,10 @@ int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
         xprintf("decoding: %s\n", ok? "succeeded" : "FAILED");
         xprintf("   state: %s\n", FLAC__StreamDecoderStateString[FLAC__stream_decoder_get_state(decoder)]);
     }
-
+    xprintf("exiting\n");
     // end decoding
     // f_close(path);
+    return 0;
 }
 
 int close_decoder(){
@@ -114,13 +114,16 @@ int load_flac_frame(){
 FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data)
 {
     xprintf("reading\n");
-    FIL file = ((MyFileData*)client_data)->file;
+    FIL* file = ((MyFileData*)client_data)->file;
+    xprintf("reading position: %d\n", f_tell(file));
     if(*bytes > 0) {
         size_t readbytes;
-        FRESULT res = f_read(&file, buffer, *bytes, &readbytes);
+        FRESULT res = f_read(file, buffer, *bytes, &readbytes);
+        f_disp_res(res);
         xprintf("read: %d\n", readbytes);
+        xprintf("position: %d\n", f_tell(file));
         *bytes = readbytes;
-        if(f_error(&file)) {
+        if(f_error(file)) {
             return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
         }
         else if(*bytes == 0)
@@ -134,36 +137,43 @@ FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder *decoder, 
 
 FLAC__StreamDecoderSeekStatus seek_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 absolute_byte_offset, void *client_data)
 {
-   FIL file = ((MyFileData *)client_data)->file;
-   if(&file == stdin)
-       return FLAC__STREAM_DECODER_SEEK_STATUS_UNSUPPORTED;
-   else if(f_lseek(&file, (off_t)absolute_byte_offset) < 0) //TODO check errors
+    xprintf("seek");
+    FIL* file = ((MyFileData *)client_data)->file;
+//   if(&file == stdin)
+//      return FLAC__STREAM_DECODER_SEEK_STATUS_UNSUPPORTED;
+//   else
+    FRESULT res = f_lseek(file, (off_t)absolute_byte_offset);
+    f_disp_res(res);
+    if(res < 0)
        return FLAC__STREAM_DECODER_SEEK_STATUS_ERROR;
-   else
+    else
        return FLAC__STREAM_DECODER_SEEK_STATUS_OK;
 }
 
 FLAC__StreamDecoderTellStatus tell_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 *absolute_byte_offset, void *client_data)
 {
-   FIL file = ((MyFileData*)client_data)->file;
+   xprintf("tell\n");
+   FIL* file = ((MyFileData*)client_data)->file;
    FSIZE_t pos;
    if(&file == stdin)
        return FLAC__STREAM_DECODER_TELL_STATUS_UNSUPPORTED;
-   else if((pos = f_tell(&file)) < 0)
+   else if((pos = f_tell(file)) < 0)
        return FLAC__STREAM_DECODER_TELL_STATUS_ERROR;
    else {
+       xprintf("Tell status ok\n");
        *absolute_byte_offset = (FLAC__uint64)pos;
        return FLAC__STREAM_DECODER_TELL_STATUS_OK;
    }
 }
 
 FLAC__StreamDecoderLengthStatus length_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 *stream_length, void *client_data) {
-    FIL file = ((MyFileData *) client_data)->file;
+    xprintf("length\n");
+    FIL* file = ((MyFileData *) client_data)->file;
     FILINFO filestats;
 
     if (&file == stdin)
         return FLAC__STREAM_DECODER_LENGTH_STATUS_UNSUPPORTED;
-    else if (f_stat(&file, &filestats) != 0)
+    else if (f_stat(file, &filestats) != 0)
         return FLAC__STREAM_DECODER_LENGTH_STATUS_ERROR;
     else {
         *stream_length = (FLAC__uint64) filestats.fsize;
@@ -172,8 +182,8 @@ FLAC__StreamDecoderLengthStatus length_callback(const FLAC__StreamDecoder *decod
 }
 
 FLAC__bool eof_callback(const FLAC__StreamDecoder *decoder, void *client_data){
-    FIL file = ((MyFileData*)client_data)->file;
-    return f_eof(&file)? true : false;
+    FIL* file = ((MyFileData*)client_data)->file;
+    return f_eof(file)? true : false;
 }
 
 
