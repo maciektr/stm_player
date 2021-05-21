@@ -21,10 +21,10 @@ FLAC__bool eof_callback(const FLAC__StreamDecoder *decoder, void *client_data);
 
 
 typedef struct MyFileData{
-    FIL* file;
+    FIL file;
     char *path;
     uint8_t *buffer;
-    int *loaded_counter;
+    int loaded_counter;
 } MyFileData;
 
 // TODO repeated from main
@@ -57,7 +57,6 @@ static void f_disp_res(FRESULT r)
 }
 
 FLAC__StreamDecoder *decoder = 0;
-FIL file;
 MyFileData filedata;
 
 int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
@@ -70,12 +69,11 @@ int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
         return 1;
     }
 
-    FRESULT res = f_open(&file, path, FA_READ);
+    FRESULT res = f_open(&filedata.file, path, FA_READ);
     f_disp_res(res);
     filedata.path = path;
     filedata.buffer = buffer;
     filedata.loaded_counter = loaded_counter;
-    filedata.file = &file;
 
 
     init_status = FLAC__stream_decoder_init_stream(
@@ -92,9 +90,6 @@ int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
         xprintf("decoding: %s\n", ok? "succeeded" : "FAILED");
         xprintf("   state: %s\n", FLAC__StreamDecoderStateString[FLAC__stream_decoder_get_state(decoder)]);
     }
-    xprintf("exiting\n");
-    // end decoding
-    // f_close(path);
     return 0;
 }
 
@@ -114,8 +109,8 @@ int load_flac_frame(){
 FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data)
 {
     xprintf("reading\n");
-    FIL* file = ((MyFileData*)client_data)->file;
-    xprintf("reading position: %d\n", f_tell(file));
+    FIL* file = &((MyFileData*)client_data)->file;
+    xprintf("reading position: %d, %d, %d\n", f_tell(file), buffer, f_size(file));
     if(*bytes > 0) {
         size_t readbytes;
         FRESULT res = f_read(file, buffer, *bytes, &readbytes);
@@ -123,6 +118,7 @@ FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder *decoder, 
         xprintf("read: %d\n", readbytes);
         xprintf("position: %d\n", f_tell(file));
         *bytes = readbytes;
+        xprintf("bytes: %d\n", *bytes);
         if(f_error(file)) {
             return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
         }
@@ -137,11 +133,10 @@ FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder *decoder, 
 
 FLAC__StreamDecoderSeekStatus seek_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 absolute_byte_offset, void *client_data)
 {
-    xprintf("seek");
-    FIL* file = ((MyFileData *)client_data)->file;
-//   if(&file == stdin)
-//      return FLAC__STREAM_DECODER_SEEK_STATUS_UNSUPPORTED;
-//   else
+    xprintf("seek\n");
+    FIL* file = &((MyFileData *)client_data)->file;
+    if(&file == stdin)
+      return FLAC__STREAM_DECODER_SEEK_STATUS_UNSUPPORTED;
     FRESULT res = f_lseek(file, (off_t)absolute_byte_offset);
     f_disp_res(res);
     if(res < 0)
@@ -153,14 +148,14 @@ FLAC__StreamDecoderSeekStatus seek_callback(const FLAC__StreamDecoder *decoder, 
 FLAC__StreamDecoderTellStatus tell_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 *absolute_byte_offset, void *client_data)
 {
    xprintf("tell\n");
-   FIL* file = ((MyFileData*)client_data)->file;
+   FIL* file = &((MyFileData*)client_data)->file;
    FSIZE_t pos;
-   if(&file == stdin)
+   if(file == stdin)
        return FLAC__STREAM_DECODER_TELL_STATUS_UNSUPPORTED;
    else if((pos = f_tell(file)) < 0)
        return FLAC__STREAM_DECODER_TELL_STATUS_ERROR;
    else {
-       xprintf("Tell status ok\n");
+       xprintf("Tell status ok %d\n", pos);
        *absolute_byte_offset = (FLAC__uint64)pos;
        return FLAC__STREAM_DECODER_TELL_STATUS_OK;
    }
@@ -168,10 +163,10 @@ FLAC__StreamDecoderTellStatus tell_callback(const FLAC__StreamDecoder *decoder, 
 
 FLAC__StreamDecoderLengthStatus length_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 *stream_length, void *client_data) {
     xprintf("length\n");
-    FIL* file = ((MyFileData *) client_data)->file;
+    FIL* file = &((MyFileData *) client_data)->file;
     FILINFO filestats;
 
-    if (&file == stdin)
+    if (file == stdin)
         return FLAC__STREAM_DECODER_LENGTH_STATUS_UNSUPPORTED;
     else if (f_stat(file, &filestats) != 0)
         return FLAC__STREAM_DECODER_LENGTH_STATUS_ERROR;
@@ -182,7 +177,7 @@ FLAC__StreamDecoderLengthStatus length_callback(const FLAC__StreamDecoder *decod
 }
 
 FLAC__bool eof_callback(const FLAC__StreamDecoder *decoder, void *client_data){
-    FIL* file = ((MyFileData*)client_data)->file;
+    FIL* file = &((MyFileData*)client_data)->file;
     return f_eof(file)? true : false;
 }
 
@@ -235,17 +230,19 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
         write_little_endian(myData->buffer + 48, total_size);
         myData->loaded_counter += 52;
 	}
-
 	/* write decoded PCM samples */
     int buffer_offset = 0;
+    xprintf("Blocksize: %d\n", frame->header.blocksize);
 	for(int i = 0; i < frame->header.blocksize; i++) {
-		write_little_endian(myData->buffer + buffer_offset, (FLAC__int16)buffer[0][i]);  /* left channel */
+		write_little_endian(myData->buffer + myData->loaded_counter, (FLAC__int16)buffer[0][i]);  /* left channel */
         buffer_offset+=4;
-		write_little_endian(myData->buffer+buffer_offset, (FLAC__int16)buffer[1][i]);  /* right channel */
+        myData->loaded_counter+=4;
+		write_little_endian(myData->buffer + myData->loaded_counter, (FLAC__int16)buffer[1][i]);  /* right channel */
         buffer_offset+=4;
+        myData->loaded_counter+=4;
+        if(myData->loaded_counter>=4096*4) return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
 	}
-    myData->loaded_counter += buffer_offset;
-
+	myData->loaded_counter += buffer_offset;
    return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
 }
 
@@ -272,6 +269,5 @@ void metadata_callback(const FLAC__StreamDecoder *decoder, const FLAC__StreamMet
 void error_callback(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data)
 {
     (void)decoder, (void)client_data;
-
     xprintf("Got error callback: %s\n", FLAC__StreamDecoderErrorStatusString[status]);
 }
