@@ -539,7 +539,7 @@ void BSP_AUDIO_OUT_HalfTransfer_CallBack(void)
 void BSP_AUDIO_OUT_TransferComplete_CallBack(void)
 {
   buf_offs = BUFFER_OFFSET_FULL;
-  BSP_AUDIO_OUT_ChangeBuffer((uint16_t*)&buff[0], AUDIO_BUFFER_SIZE / 2);
+  BSP_AUDIO_OUT_ChangeBuffer((uint16_t*)&buff[0], AUDIO_BUFFER_SIZE/2);
 }
 
 
@@ -590,10 +590,6 @@ void StartDefaultTask(void const * argument)
 
   int loaded_counter;
   start_flac_decoding(FNAME, buff, &loaded_counter);
-  load_flac_frame();
-  load_flac_frame();
-    load_flac_frame();
-    load_flac_frame();
 
   /* Infinite loop */
   for(;;)
@@ -631,8 +627,6 @@ void StartDefaultTask(void const * argument)
           load_flac_frame();
           buf_offs = BUFFER_OFFSET_NONE;
           fpos += br;
-          BSP_AUDIO_OUT_Play((uint16_t*)&buff[0],AUDIO_BUFFER_SIZE);
-
 		}
 
 		if(buf_offs == BUFFER_OFFSET_FULL)
