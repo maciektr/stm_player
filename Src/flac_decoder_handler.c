@@ -24,8 +24,10 @@ typedef struct MyFileData{
     FIL file;
     char *path;
     uint8_t *buffer;
-    int loaded_counter;
+    int* loaded_counter;
+    uint8_t* buf_off;
 } MyFileData;
+int playing = 0;
 
 // TODO repeated from main
 static void f_disp_res(FRESULT r)
@@ -58,8 +60,9 @@ static void f_disp_res(FRESULT r)
 
 FLAC__StreamDecoder *decoder = 0;
 MyFileData filedata;
+SemaphoreHandle_t syncSemaphore;
 
-int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
+int start_flac_decoding(char *path, uint8_t *buffer, int* loaded_counter, uint8_t* buf_off, SemaphoreHandle_t semaphore)
 {
     FLAC__bool ok = true;
     FLAC__StreamDecoderInitStatus init_status;
@@ -74,6 +77,8 @@ int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
     filedata.path = path;
     filedata.buffer = buffer;
     filedata.loaded_counter = loaded_counter;
+    filedata.buf_off = buf_off;
+    syncSemaphore = semaphore;
 
 
     init_status = FLAC__stream_decoder_init_stream(
@@ -90,20 +95,17 @@ int start_flac_decoding(char *path, uint8_t *buffer, int * loaded_counter)
         xprintf("decoding: %s\n", ok? "succeeded" : "FAILED");
         xprintf("   state: %s\n", FLAC__StreamDecoderStateString[FLAC__stream_decoder_get_state(decoder)]);
     }
+    playing = 0;
     return 0;
 }
 
 int close_decoder(){
+    playing = 0;
     FLAC__stream_decoder_delete(decoder);
     f_close(&filedata.file);
 }
 
 int load_flac_frame(){
-    //seek test
-    //xprintf(" seekstart\n");
-    //FLAC__bool ok1 = FLAC__stream_decoder_seek_absolute(decoder, 0);
-    //xprintf(" seekend: %s\n", ok1? "succeeded" : "FAILED");
-
     xprintf("Run process single\n");
     FLAC__bool ok;
     ok = FLAC__stream_decoder_process_single(decoder);
@@ -114,7 +116,7 @@ int load_flac_frame(){
 
 FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data)
 {
-    xprintf("reading\n");
+    //xprintf("reading\n");
     FIL* file = &((MyFileData*)client_data)->file;
     //xprintf("reading position: %d, %d, %d\n", f_tell(file), buffer, f_size(file));
     if(*bytes > 0) {
@@ -135,7 +137,7 @@ FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder *decoder, 
 
 FLAC__StreamDecoderSeekStatus seek_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 absolute_byte_offset, void *client_data)
 {
-    xprintf("seek\n");
+    //xprintf("seek\n");
     FIL* file = &((MyFileData *)client_data)->file;
     if(&file == stdin)
       return FLAC__STREAM_DECODER_SEEK_STATUS_UNSUPPORTED;
@@ -149,7 +151,7 @@ FLAC__StreamDecoderSeekStatus seek_callback(const FLAC__StreamDecoder *decoder, 
 
 FLAC__StreamDecoderTellStatus tell_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 *absolute_byte_offset, void *client_data)
 {
-   xprintf("tell\n");
+   //xprintf("tell\n");
    FIL* file = &((MyFileData*)client_data)->file;
    FSIZE_t pos;
    if(file == stdin)
@@ -163,7 +165,7 @@ FLAC__StreamDecoderTellStatus tell_callback(const FLAC__StreamDecoder *decoder, 
 }
 
 FLAC__StreamDecoderLengthStatus length_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 *stream_length, void *client_data) {
-    xprintf("length\n");
+    //xprintf("length\n");
     FIL* file = &((MyFileData *) client_data)->file;
     *stream_length = (FLAC__uint64) f_size(file);
     if (file == stdin)
@@ -180,6 +182,26 @@ FLAC__bool eof_callback(const FLAC__StreamDecoder *decoder, void *client_data){
     return f_eof(file)? true : false;
 }
 
+void polling(int* state, int* loaded_counter, uint8_t *buff){
+    if(!playing && loaded_counter==4096*2) return;
+    if(loaded_counter >= 4096*4) {
+        if(!playing) {
+            xSemaphoreGive(syncSemaphore);
+            BSP_AUDIO_OUT_Play((uint16_t*)buff[0],4096*4);
+        }
+        playing = 1;
+        *loaded_counter = 0;
+    }
+    for(;;) {
+        if(*state != 0) {
+            *state = 0;
+            xprintf("Sem: Poll\n");
+            xSemaphoreGive(syncSemaphore);
+            return;
+        }
+        vTaskDelay(2);
+    }
+}
 
 void write_little_endian(uint8_t *buff, FLAC__uint16 val){
     buff[0] = val & 0xff;
@@ -188,7 +210,7 @@ void write_little_endian(uint8_t *buff, FLAC__uint16 val){
 
 FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame, const FLAC__int32 * const buffer[], void *client_data)
 {
-    xprintf("writing\n");
+    //xprintf("writing\n");
     const FLAC__uint32 total_size = (FLAC__uint32)(total_samples * channels * (bps/8));
     /*
     if(channels != 2 || bps != 16) {
@@ -209,7 +231,6 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
     }
 
     MyFileData *myData = (MyFileData*)client_data;
-    myData->loaded_counter = 0;
 
 	/* write WAVE header before we write the first frame */
 	if(frame->header.number.sample_number == 0) {
@@ -225,23 +246,18 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
         write_little_endian(myData->buffer + 40, (FLAC__uint16)bps);
         memcpy(myData->buffer + 44, "data", sizeof(char) * 4);
         write_little_endian(myData->buffer + 48, total_size);
-        myData->loaded_counter += 52;
+        *(myData->loaded_counter) += 52;
 	}
 	/* write decoded PCM samples */
-    int buffer_offset = 0;
-    xprintf("Blocksize: %d\n", frame->header.blocksize);
 	for(int i = 0; i < frame->header.blocksize; i++) {
-	    if(i==0){
-	        xprintf("first sample: %d\n", (FLAC__int16)buffer[0][i]);
-	    }
+        for(int j = 0; j < frame->header.channels; j++) {
+            write_little_endian(myData->buffer + *(myData->loaded_counter),(FLAC__int16) buffer[j][i]);
+            *(myData->loaded_counter) += 2;
 
-		write_little_endian(myData->buffer + myData->loaded_counter, (FLAC__int16)buffer[0][i]);  /* left channel */
-        buffer_offset+=2;
-        myData->loaded_counter+=2;
-		write_little_endian(myData->buffer + myData->loaded_counter, (FLAC__int16)buffer[1][i]);  /* right channel */
-        buffer_offset+=2;
-        myData->loaded_counter+=2;
-        if(myData->loaded_counter>=4096*4) return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+            if (*(myData->loaded_counter) >= 4096 * 4 || *(myData->loaded_counter) == 4096 * 2) {
+                polling(myData->buf_off, myData->loaded_counter, myData->buffer);
+            }
+        }
 	}
 
 	return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
