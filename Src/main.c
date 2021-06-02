@@ -61,6 +61,7 @@
 #include "dbgu.h"
 #include "FLAC/stream_decoder.h"
 #include "flac_decoder_handler.h"
+#include "user_interface.h"
 #include "semphr.h"
 
 /* USER CODE END Includes */
@@ -477,7 +478,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 FIL file;
 
-const char* FNAME = "test_1k.wav";
+const char* FNAME = "0:/test_1k.wav";
 extern ApplicationTypeDef Appli_state;
 extern USBH_HandleTypeDef hUsbHostHS;
 enum
@@ -489,7 +490,7 @@ enum
 #define AUDIO_BUFFER_SIZE             4096*4
 uint8_t buff[AUDIO_BUFFER_SIZE];
 static SemaphoreHandle_t syncSemaphore;
-static uint8_t player_state = 0;
+static uint8_t callback_state = 0;
 static uint8_t buf_offs = BUFFER_OFFSET_NONE;
 static uint32_t fpos = 0;
 
@@ -530,9 +531,8 @@ static void f_disp_res(FRESULT r)
   */
 void BSP_AUDIO_OUT_HalfTransfer_CallBack(void)
 {
-    xprintf("Sem: Half\n");
-    buf_offs = BUFFER_OFFSET_HALF;
-    xSemaphoreTakeFromISR(syncSemaphore, 1000);
+    //buf_offs = BUFFER_OFFSET_HALF;
+    //xSemaphoreTakeFromISR(syncSemaphore, 1000);
 }
 
 /**
@@ -542,10 +542,17 @@ void BSP_AUDIO_OUT_HalfTransfer_CallBack(void)
 */
 void BSP_AUDIO_OUT_TransferComplete_CallBack(void)
 {
-    xprintf("Sem: Full\n");
     buf_offs = BUFFER_OFFSET_FULL;
-    xSemaphoreTakeFromISR(syncSemaphore, 1000);
-    BSP_AUDIO_OUT_ChangeBuffer((uint16_t*)&buff[0], AUDIO_BUFFER_SIZE);
+    //BSP_AUDIO_OUT_Pause();
+    xSemaphoreTakeFromISR(syncSemaphore, 1000000);
+    //BSP_AUDIO_OUT_Resume();
+    if(callback_state == 0) {
+        BSP_AUDIO_OUT_ChangeBuffer((uint16_t * ) & buff[0], AUDIO_BUFFER_SIZE/2);
+        callback_state = 1;
+    }else{
+        BSP_AUDIO_OUT_ChangeBuffer((uint16_t * ) & buff[0] + AUDIO_BUFFER_SIZE/2, AUDIO_BUFFER_SIZE/2);
+        callback_state = 0;
+    }
 }
 
 
@@ -569,12 +576,11 @@ void StartDefaultTask(void const * argument)
   MX_FATFS_Init();
 
   /* USER CODE BEGIN 5 */
-
   HAL_GPIO_WritePin(OTG_FS_PowerSwitchOn_GPIO_Port, OTG_FS_PowerSwitchOn_Pin, GPIO_PIN_RESET);
 
   vTaskDelay(1000);
 
-  xprintf("waiting for USB mass storage\n");
+  xprintf("Waiting for USB mass storage\n");
 
   do
   {
@@ -582,14 +588,6 @@ void StartDefaultTask(void const * argument)
 	  vTaskDelay(250);
   }while(Appli_state != APPLICATION_READY);
 
-  if(BSP_AUDIO_OUT_Init(OUTPUT_DEVICE_AUTO,70,44100) == 0)
-  {
-	  xprintf("audio init OK\n");
-  }
-  else
-  {
-	  xprintf("audio init ERROR\n");
-  }
   for(int i = 0; i < AUDIO_BUFFER_SIZE; i++){
       buff[i] = 0;
   }
@@ -598,12 +596,12 @@ void StartDefaultTask(void const * argument)
   {
       xprintf("There was insufficient FreeRTOS heap available for the semaphore to be created successfully.");
   }
-  xprintf("test\n");
-  xSemaphoreGive(syncSemaphore);
-  xSemaphoreGive(syncSemaphore);
-  xSemaphoreTake(syncSemaphore,10);
-  xprintf("test complete\n");
 
+  /* MAIN PROCEDURE - comment to disable */
+  choose_file(&buff, &buf_offs, syncSemaphore);
+
+  /* LEFT FOR TESTING PURPOSES */
+  uint8_t player_state = 0;
   int loaded_counter = 0;
   start_flac_decoding(FNAME, buff, &loaded_counter, &buf_offs, syncSemaphore);
 
@@ -611,7 +609,6 @@ void StartDefaultTask(void const * argument)
   for(;;)
   {
 	char key = debug_inkey();
-
 	switch(key)
 	{
 		case 'p':
@@ -620,55 +617,18 @@ void StartDefaultTask(void const * argument)
 			if(player_state) {xprintf("already playing\n"); break;}
 			player_state = 1;
 			fpos = 0;
+            loaded_counter = 0;
 			buf_offs = BUFFER_OFFSET_NONE;
 			break;
 		}
 	}
 
-	if(player_state)
+	if(player_state == 1)
 	{
-		uint32_t br;
-		for(;;){
-		    load_flac_frame();
+		if(load_flac_frame()){
+		    xprintf("Error while playing.");
 		}
-		/*
-		if(buf_offs == BUFFER_OFFSET_HALF)
-		{
-		  // if(f_read(&file,
-			// 		&buff[0],
-			// 		AUDIO_BUFFER_SIZE/2,
-			// 		(void *)&br) != FR_OK)
-		  // {
-			// BSP_AUDIO_OUT_Stop(CODEC_PDWN_SW);
-			// xprintf("f_read error on half\n");
-		  // }
-          load_flac_frame();
-          buf_offs = BUFFER_OFFSET_NONE;
-          fpos += br;
-		}
-
-		if(buf_offs == BUFFER_OFFSET_FULL)
-		{
-			// if(f_read(&file,
-			// 		&buff[AUDIO_BUFFER_SIZE /2],
-			// 		AUDIO_BUFFER_SIZE/2,
-			// 		(void *)&br) != FR_OK)
-			// {
-			// 	BSP_AUDIO_OUT_Stop(CODEC_PDWN_SW);
-			// 	xprintf("f_read error on full\n");
-			// }
-            load_flac_frame();
-			buf_offs = BUFFER_OFFSET_NONE;
-			fpos += br;
-		}
-        */
-		// if( br < AUDIO_BUFFER_SIZE/2 )
-		// {
-		// 	xprintf("stop at eof\n");
-		// 	BSP_AUDIO_OUT_Stop(CODEC_PDWN_SW);
-		// 	player_state = 0;
-		// }
-	}  //if(player_state)
+	}
 
 	vTaskDelay(2);
   }

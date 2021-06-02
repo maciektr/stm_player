@@ -4,6 +4,7 @@
 #include "FLAC/stream_decoder.h"
 #include "flac_decoder_handler.h"
 #include "fatfs.h"
+#include "stm32f4_discovery_audio.h"
 
 static FLAC__uint64 total_samples = 0;
 static unsigned sample_rate = 0;
@@ -62,6 +63,7 @@ FLAC__StreamDecoder *decoder = 0;
 MyFileData filedata;
 SemaphoreHandle_t syncSemaphore;
 
+/* Creates a new decoder instance (saved in global context) and decodes first frame. */
 int start_flac_decoding(char *path, uint8_t *buffer, int* loaded_counter, uint8_t* buf_off, SemaphoreHandle_t semaphore)
 {
     FLAC__bool ok = true;
@@ -74,6 +76,11 @@ int start_flac_decoding(char *path, uint8_t *buffer, int* loaded_counter, uint8_
 
     FRESULT res = f_open(&filedata.file, path, FA_READ);
     f_disp_res(res);
+    if(res != FR_OK){ /* destroy and return */
+        xprintf("Error opening file, returning to file selection.");
+        FLAC__stream_decoder_delete(decoder);
+        return 1;
+    }
     filedata.path = path;
     filedata.buffer = buffer;
     filedata.loaded_counter = loaded_counter;
@@ -92,33 +99,37 @@ int start_flac_decoding(char *path, uint8_t *buffer, int* loaded_counter, uint8_
 
     if(ok) {
         ok = FLAC__stream_decoder_process_single(decoder);
-        xprintf("decoding: %s\n", ok? "succeeded" : "FAILED");
-        xprintf("   state: %s\n", FLAC__StreamDecoderStateString[FLAC__stream_decoder_get_state(decoder)]);
+        if(!ok) {
+            xprintf("decoding: FAILED");
+            xprintf("   state: %s\n", FLAC__StreamDecoderStateString[FLAC__stream_decoder_get_state(decoder)]);
+        }
     }
     playing = 0;
     return 0;
 }
 
+/* Deletes decoder data and closes file, all derived from a global context. */
 int close_decoder(){
     playing = 0;
     FLAC__stream_decoder_delete(decoder);
     f_close(&filedata.file);
 }
 
+/* Loads and decodes one FLAC frame. */
 int load_flac_frame(){
-    xprintf("Run process single\n");
     FLAC__bool ok;
     ok = FLAC__stream_decoder_process_single(decoder);
-    xprintf("decoding: %s\n", ok? "succeeded" : "FAILED");
-    xprintf("   state: %s\n", FLAC__StreamDecoderStateString[FLAC__stream_decoder_get_state(decoder)]);
+    if(!ok){
+        xprintf("Decoding: FAILED");
+        xprintf("Failed on state: %s\n", FLAC__StreamDecoderStateString[FLAC__stream_decoder_get_state(decoder)]);
+        return 1;
+    }
     return 0;
 }
 
 FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data)
 {
-    //xprintf("reading\n");
     FIL* file = &((MyFileData*)client_data)->file;
-    //xprintf("reading position: %d, %d, %d\n", f_tell(file), buffer, f_size(file));
     if(*bytes > 0) {
         size_t readbytes;
         FRESULT res = f_read(file, buffer, *bytes, &readbytes);
@@ -137,7 +148,6 @@ FLAC__StreamDecoderReadStatus read_callback(const FLAC__StreamDecoder *decoder, 
 
 FLAC__StreamDecoderSeekStatus seek_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 absolute_byte_offset, void *client_data)
 {
-    //xprintf("seek\n");
     FIL* file = &((MyFileData *)client_data)->file;
     if(&file == stdin)
       return FLAC__STREAM_DECODER_SEEK_STATUS_UNSUPPORTED;
@@ -151,7 +161,6 @@ FLAC__StreamDecoderSeekStatus seek_callback(const FLAC__StreamDecoder *decoder, 
 
 FLAC__StreamDecoderTellStatus tell_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 *absolute_byte_offset, void *client_data)
 {
-   //xprintf("tell\n");
    FIL* file = &((MyFileData*)client_data)->file;
    FSIZE_t pos;
    if(file == stdin)
@@ -165,7 +174,6 @@ FLAC__StreamDecoderTellStatus tell_callback(const FLAC__StreamDecoder *decoder, 
 }
 
 FLAC__StreamDecoderLengthStatus length_callback(const FLAC__StreamDecoder *decoder, FLAC__uint64 *stream_length, void *client_data) {
-    //xprintf("length\n");
     FIL* file = &((MyFileData *) client_data)->file;
     *stream_length = (FLAC__uint64) f_size(file);
     if (file == stdin)
@@ -195,11 +203,10 @@ void polling(int* state, int* loaded_counter, uint8_t *buff){
     for(;;) {
         if(*state != 0) {
             *state = 0;
-            xprintf("Sem: Poll\n");
             xSemaphoreGive(syncSemaphore);
             return;
         }
-        vTaskDelay(2);
+        vTaskDelay(1);
     }
 }
 
@@ -210,23 +217,13 @@ void write_little_endian(uint8_t *buff, FLAC__uint16 val){
 
 FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame, const FLAC__int32 * const buffer[], void *client_data)
 {
-    //xprintf("writing\n");
     const FLAC__uint32 total_size = (FLAC__uint32)(total_samples * channels * (bps/8));
-    /*
-    if(channels != 2 || bps != 16) {
-        xprintf("ERROR: this example only supports 16bit stereo streams\n");
-        return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
-    }*/
-    if(frame->header.channels != 2) {
-        xprintf("ERROR: This frame contains %u channels (should be 2)\n", frame->header.channels);
-        return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
-    }
     if(buffer [0] == NULL) {
-        xprintf("ERROR: buffer [0] is NULL\n");
+        xprintf("FLAC decoder ERROR: buffer [0] is NULL\n");
         return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
     }
     if(buffer [1] == NULL) {
-        xprintf("ERROR: buffer [1] is NULL\n");
+        xprintf("FLAC decoder ERROR: buffer [1] is NULL\n");
         return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
     }
 
@@ -248,6 +245,7 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
         write_little_endian(myData->buffer + 48, total_size);
         *(myData->loaded_counter) += 52;
 	}
+
 	/* write decoded PCM samples */
 	for(int i = 0; i < frame->header.blocksize; i++) {
         for(int j = 0; j < frame->header.channels; j++) {
@@ -265,7 +263,6 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
 
 void metadata_callback(const FLAC__StreamDecoder *decoder, const FLAC__StreamMetadata *metadata, void *client_data)
 {
-    xprintf("metadata\n");
     (void)decoder, (void)client_data;
     xprintf(metadata -> type);
     /* print some stats */
@@ -276,17 +273,27 @@ void metadata_callback(const FLAC__StreamDecoder *decoder, const FLAC__StreamMet
         channels = metadata->data.stream_info.channels;
         bps = metadata->data.stream_info.bits_per_sample;
 
+        xprintf("FILE METADATA: \n");
         xprintf("sample rate    : %u Hz\n", sample_rate);
         xprintf("channels       : %u\n", channels);
         xprintf("bits per sample: %u\n", bps);
-        //xprintf("total samples  : " PRIu64 "\n", total_samples); // Does not work
-    }else{
-        xprintf("other type\n");
+
+        /* Set output to correct sample_rate */
+        if(BSP_AUDIO_OUT_Init(OUTPUT_DEVICE_AUTO,70,sample_rate) == 0){
+            xprintf("FLAC decoder: audio init OK\n");
+        }else{
+            xprintf("FLAC decoder: audio init ERROR\n");
+        }
     }
 }
 
 void error_callback(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data)
 {
     (void)decoder, (void)client_data;
-    xprintf("Got error callback: %s\n", FLAC__StreamDecoderErrorStatusString[status]);
+    xprintf("FLAC decoder: got error callback: %s\n", FLAC__StreamDecoderErrorStatusString[status]);
+}
+
+/* Checks if fileptr from global context reached the end of file. */
+int reached_eof(){
+    return f_eof(&filedata.file);
 }
