@@ -6,6 +6,7 @@
 #include "fatfs.h"
 #include "stm32f4_discovery_audio.h"
 
+
 static FLAC__uint64 total_samples = 0;
 static unsigned sample_rate = 0;
 static unsigned channels = 0;
@@ -75,9 +76,9 @@ int start_flac_decoding(char *path, uint8_t *buffer, int* loaded_counter, uint8_
     }
 
     FRESULT res = f_open(&filedata.file, path, FA_READ);
-    f_disp_res(res);
     if(res != FR_OK){ /* destroy and return */
         xprintf("Error opening file, returning to file selection.");
+        f_disp_res(res);
         FLAC__stream_decoder_delete(decoder);
         return 1;
     }
@@ -191,11 +192,11 @@ FLAC__bool eof_callback(const FLAC__StreamDecoder *decoder, void *client_data){
 }
 
 void polling(int* state, int* loaded_counter, uint8_t *buff){
-    if(!playing && loaded_counter==4096*2) return;
-    if(loaded_counter >= 4096*4) {
+    if(!playing && loaded_counter==AUDIO_BUFFER_SIZE/2) return;
+    if(loaded_counter >= AUDIO_BUFFER_SIZE) {
         if(!playing) {
             xSemaphoreGive(syncSemaphore);
-            BSP_AUDIO_OUT_Play((uint16_t*)buff[0],4096*4);
+            BSP_AUDIO_OUT_Play((uint16_t*)buff[0],AUDIO_BUFFER_SIZE);
         }
         playing = 1;
         *loaded_counter = 0;
@@ -210,9 +211,10 @@ void polling(int* state, int* loaded_counter, uint8_t *buff){
     }
 }
 
-void write_little_endian(uint8_t *buff, FLAC__uint16 val){
-    buff[0] = val & 0xff;
-    buff[1] = (val >> 8) & 0xff;
+void write_little_endian(uint8_t *buff, FLAC__uint32 val, int bytes){
+    for(int i = 0; i< bytes; i++) {
+        buff[i] =(FLAC__uint8) ((val >> (8*i)) & 0xff);
+    }
 }
 
 FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame, const FLAC__int32 * const buffer[], void *client_data)
@@ -232,28 +234,30 @@ FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *decoder
 	/* write WAVE header before we write the first frame */
 	if(frame->header.number.sample_number == 0) {
         memcpy(myData->buffer, "RIFF", sizeof(char) * 4);
-        write_little_endian(myData->buffer + 4, total_size + 36);
+        write_little_endian(myData->buffer + 4, total_size + 36, 4);
         memcpy(myData->buffer + 8, "WAVEfmt ", sizeof(char) * 8);
-        write_little_endian(myData->buffer + 16, 16);
-        write_little_endian(myData->buffer + 20, 1);
-        write_little_endian(myData->buffer + 24, (FLAC__uint16)channels);
-        write_little_endian(myData->buffer + 28, sample_rate);
-        write_little_endian(myData->buffer + 32, sample_rate * channels * (bps/8));
-        write_little_endian(myData->buffer + 36, (FLAC__uint16)(channels * (bps/8)));
-        write_little_endian(myData->buffer + 40, (FLAC__uint16)bps);
-        memcpy(myData->buffer + 44, "data", sizeof(char) * 4);
-        write_little_endian(myData->buffer + 48, total_size);
-        *(myData->loaded_counter) += 52;
+        write_little_endian(myData->buffer + 16, 16, 4);
+        write_little_endian(myData->buffer + 20, (FLAC__uint16)1, 2);
+        write_little_endian(myData->buffer + 22, (FLAC__uint16)channels, 2);
+        write_little_endian(myData->buffer + 24, sample_rate, 4);
+        write_little_endian(myData->buffer + 28, sample_rate * channels * (bps/8), 4);
+        write_little_endian(myData->buffer + 32, (FLAC__uint16)(channels * (bps/8)), 2);
+        write_little_endian(myData->buffer + 34, (FLAC__uint16)bps, 2);
+        memcpy(myData->buffer + 36, "data", sizeof(char) * 4);
+        write_little_endian(myData->buffer + 40, total_size, 4);
+        *(myData->loaded_counter) += 44;
 	}
 
 	/* write decoded PCM samples */
 	for(int i = 0; i < frame->header.blocksize; i++) {
         for(int j = 0; j < frame->header.channels; j++) {
-            write_little_endian(myData->buffer + *(myData->loaded_counter),(FLAC__int16) buffer[j][i]);
-            *(myData->loaded_counter) += 2;
+            for(int k = 0; k < bps/8; k++) {
+                myData->buffer[*(myData->loaded_counter)] = (FLAC__uint8) (((FLAC__uint32)(buffer[j][i]) >> (8*k)) & 0xff);
+                *(myData->loaded_counter) += 1;
 
-            if (*(myData->loaded_counter) >= 4096 * 4 || *(myData->loaded_counter) == 4096 * 2) {
-                polling(myData->buf_off, myData->loaded_counter, myData->buffer);
+                if ((*(myData->loaded_counter) >= AUDIO_BUFFER_SIZE) || (*(myData->loaded_counter) == AUDIO_BUFFER_SIZE/2)) {
+                    polling(myData->buf_off, myData->loaded_counter, myData->buffer);
+                }
             }
         }
 	}
@@ -277,6 +281,7 @@ void metadata_callback(const FLAC__StreamDecoder *decoder, const FLAC__StreamMet
         xprintf("sample rate    : %u Hz\n", sample_rate);
         xprintf("channels       : %u\n", channels);
         xprintf("bits per sample: %u\n", bps);
+
 
         /* Set output to correct sample_rate */
         if(BSP_AUDIO_OUT_Init(OUTPUT_DEVICE_AUTO,70,sample_rate) == 0){

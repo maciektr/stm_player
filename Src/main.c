@@ -487,13 +487,14 @@ enum
   BUFFER_OFFSET_HALF,
   BUFFER_OFFSET_FULL,
 };
-#define AUDIO_BUFFER_SIZE             4096*4
 uint8_t buff[AUDIO_BUFFER_SIZE];
 static SemaphoreHandle_t syncSemaphore;
 static uint8_t callback_state = 0;
 static uint8_t buf_offs = BUFFER_OFFSET_NONE;
 static uint32_t fpos = 0;
 
+static uint32_t desyncTime = 0; // For Testing
+static uint32_t iters = 0; // For Testing
 
 static void f_disp_res(FRESULT r)
 {
@@ -542,10 +543,12 @@ void BSP_AUDIO_OUT_HalfTransfer_CallBack(void)
 */
 void BSP_AUDIO_OUT_TransferComplete_CallBack(void)
 {
-    buf_offs = BUFFER_OFFSET_FULL;
-    //BSP_AUDIO_OUT_Pause();
-    xSemaphoreTakeFromISR(syncSemaphore, 1000000);
-    //BSP_AUDIO_OUT_Resume();
+    if(callback_state == 0) buf_offs = 2;
+    else buf_offs = 1;
+    //int start_time = xTaskGetTickCountFromISR(); // Uncomment For Testing
+    xSemaphoreTakeFromISR(syncSemaphore, NULL);
+    //int time = xTaskGetTickCountFromISR() - start_time; // For Testing
+
     if(callback_state == 0) {
         BSP_AUDIO_OUT_ChangeBuffer((uint16_t * ) & buff[0], AUDIO_BUFFER_SIZE/2);
         callback_state = 1;
@@ -597,39 +600,28 @@ void StartDefaultTask(void const * argument)
       xprintf("There was insufficient FreeRTOS heap available for the semaphore to be created successfully.");
   }
 
-  /* MAIN PROCEDURE - comment to disable */
+  /* MAIN PROCEDURE - comment to disable (for testing) */
   choose_file(&buff, &buf_offs, syncSemaphore);
 
   /* LEFT FOR TESTING PURPOSES */
-  uint8_t player_state = 0;
+  uint8_t player_state = 1;
   int loaded_counter = 0;
   start_flac_decoding(FNAME, buff, &loaded_counter, &buf_offs, syncSemaphore);
 
+  int i = 0;
   /* Infinite loop */
   for(;;)
   {
-	char key = debug_inkey();
-	switch(key)
-	{
-		case 'p':
-		{
-			xprintf("play command...\n");
-			if(player_state) {xprintf("already playing\n"); break;}
-			player_state = 1;
-			fpos = 0;
-            loaded_counter = 0;
-			buf_offs = BUFFER_OFFSET_NONE;
-			break;
-		}
-	}
-
 	if(player_state == 1)
 	{
 		if(load_flac_frame()){
 		    xprintf("Error while playing.");
 		}
+		i++;
+		if(i==100){
+		    xprintf("RESULT: %d, %d\n");
+		}
 	}
-
 	vTaskDelay(2);
   }
   /* USER CODE END 5 */

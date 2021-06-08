@@ -44,9 +44,9 @@ void play(char* path, char* file, uint8_t *audio_buffer, uint8_t* buf_offs, Sema
             case 'n':
             {
                 xprintf("STOPPING\n");
+                BSP_AUDIO_OUT_Stop(CODEC_PDWN_HW);
                 close_decoder();
                 return;
-                break;
             }
         }
 
