@@ -109,7 +109,8 @@ Middlewares/Third_Party/libFLAC/lpc.c \
 Middlewares/Third_Party/libFLAC/md5.c \
 Middlewares/Third_Party/libFLAC/memory.c \
 Middlewares/Third_Party/libFLAC/fixed.c \
-Middlewares/Src/flac_decoder_handler.c
+Middlewares/Src/flac_decoder_handler.c \
+Middlewares/Src/user_interface.c
 
 # ASM sources
 ASM_SOURCES =  \
