@@ -478,7 +478,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 FIL file;
 
-const char* FNAME = "0:/test_1k.wav";
+const char* FNAME = "0:/sample~1.FLA";
 extern ApplicationTypeDef Appli_state;
 extern USBH_HandleTypeDef hUsbHostHS;
 enum
@@ -488,7 +488,7 @@ enum
   BUFFER_OFFSET_FULL,
 };
 uint8_t buff[AUDIO_BUFFER_SIZE];
-static SemaphoreHandle_t syncSemaphore;
+SemaphoreHandle_t syncSemaphore;
 static uint8_t callback_state = 0;
 static uint8_t buf_offs = BUFFER_OFFSET_NONE;
 static uint32_t fpos = 0;
@@ -530,11 +530,7 @@ static void f_disp_res(FRESULT r)
   * @param  None
   * @retval None
   */
-void BSP_AUDIO_OUT_HalfTransfer_CallBack(void)
-{
-    //buf_offs = BUFFER_OFFSET_HALF;
-    //xSemaphoreTakeFromISR(syncSemaphore, 1000);
-}
+void BSP_AUDIO_OUT_HalfTransfer_CallBack(void){}
 
 /**
 * @brief  Calculates the remaining file size and new position of the pointer.
@@ -545,9 +541,17 @@ void BSP_AUDIO_OUT_TransferComplete_CallBack(void)
 {
     if(callback_state == 0) buf_offs = 2;
     else buf_offs = 1;
-    //int start_time = xTaskGetTickCountFromISR(); // Uncomment For Testing
-    xSemaphoreTakeFromISR(syncSemaphore, NULL);
-    //int time = xTaskGetTickCountFromISR() - start_time; // For Testing
+
+    // int start_time = xTaskGetTickCountFromISR(); /* Uncomment For Testing */
+    // xprintf("a: %d\n", xTaskGetTickCountFromISR());
+
+    while(xSemaphoreTakeFromISR(syncSemaphore, NULL) != pdTRUE){}; // worst code
+
+    /* Uncomment For Testing */
+    // xprintf("b: %d\n", xTaskGetTickCountFromISR());
+    // int time = xTaskGetTickCountFromISR() - start_time;
+    // desyncTime += time;
+    // iters ++;
 
     if(callback_state == 0) {
         BSP_AUDIO_OUT_ChangeBuffer((uint16_t * ) & buff[0], AUDIO_BUFFER_SIZE/2);
@@ -619,10 +623,10 @@ void StartDefaultTask(void const * argument)
 		}
 		i++;
 		if(i==100){
-		    xprintf("RESULT: %d, %d\n");
+		    xprintf("RESULT: %d, %d\n", desyncTime,iters);
 		}
 	}
-	vTaskDelay(2);
+	vTaskDelay(1);
   }
   /* USER CODE END 5 */
   close_decoder();
