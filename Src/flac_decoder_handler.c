@@ -62,7 +62,7 @@ static void f_disp_res(FRESULT r)
 
 FLAC__StreamDecoder *decoder = 0;
 MyFileData filedata;
-SemaphoreHandle_t syncSemaphore;
+SemaphoreHandle_t syncSemaphore2;
 
 /* Creates a new decoder instance (saved in global context) and decodes first frame. */
 int start_flac_decoding(char *path, uint8_t *buffer, int* loaded_counter, uint8_t* buf_off, SemaphoreHandle_t semaphore)
@@ -86,7 +86,7 @@ int start_flac_decoding(char *path, uint8_t *buffer, int* loaded_counter, uint8_
     filedata.buffer = buffer;
     filedata.loaded_counter = loaded_counter;
     filedata.buf_off = buf_off;
-    syncSemaphore = semaphore;
+    syncSemaphore2 = semaphore;
 
 
     init_status = FLAC__stream_decoder_init_stream(
@@ -195,7 +195,7 @@ void polling(int* state, int* loaded_counter, uint8_t *buff){
     if(!playing && loaded_counter==AUDIO_BUFFER_SIZE/2) return;
     if(loaded_counter >= AUDIO_BUFFER_SIZE) {
         if(!playing) {
-            xSemaphoreGive(syncSemaphore);
+            xSemaphoreGive(syncSemaphore2);
             BSP_AUDIO_OUT_Play((uint16_t*)buff[0],AUDIO_BUFFER_SIZE);
         }
         playing = 1;
@@ -204,7 +204,7 @@ void polling(int* state, int* loaded_counter, uint8_t *buff){
     for(;;) {
         if(*state != 0) {
             *state = 0;
-            xSemaphoreGive(syncSemaphore);
+            xSemaphoreGive(syncSemaphore2);
             return;
         }
         vTaskDelay(1);
